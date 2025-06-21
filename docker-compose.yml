@@ -1,0 +1,59 @@
+services: 
+  database:
+    image: postgres:14-alpine
+    container_name: postgres_db
+    restart: always
+    environment:
+      - POSTGRES_USER=admin 
+      - POSTGRES_PASSWORD=123
+      - POSTGRES_DB=mydb
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./database/Danhsach.csv:/docker-entrypoint-initdb.d/Danhsach.csv
+    networks:
+    - my_app_network
+    # --- PHẦN BỊ THIẾU ---
+    # Thêm khối healthcheck vào đây
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d mydb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # ----------------------
+
+  backend:
+    container_name: backend_app
+    build:
+      context: ./backend 
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=123
+      - POSTGRES_DB=mydb
+      - DB_HOST=database
+    depends_on:
+      # Phần này giờ đã có thể hoạt động đúng
+      database:
+        condition: service_healthy
+    networks:
+      - my_app_network
+  
+  frontend:
+    container_name: frontend_app
+    build:
+      context: ./frontend
+      args:
+        - REACT_APP_API_URL=http://localhost:8080
+    restart: always
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - my_app_network
+
+networks:
+  my_app_network:
+    driver: bridge
