@@ -3,9 +3,9 @@ kind: Service
 metadata:
   name: {{ .Release.Name }}-backend
 spec:
-  type: ClusterIP
+  type: NodePort
   ports:
-  - port: 8080
-    targetPort: 8080
+    - port: 8080
+      targetPort: 8080
   selector:
     app: backend

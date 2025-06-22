@@ -13,7 +13,6 @@ function App() {
     // Lấy dữ liệu từ API
     // Sử dụng fetch để lấy dữ liệu từ API
     console.log("Fetching data from:", `${apiUrl}/api/users`);
-
     fetch(`${apiUrl}/api/users`) // Sửa endpoint nếu cần
       .then(response => response.json())
       .then(data => {
