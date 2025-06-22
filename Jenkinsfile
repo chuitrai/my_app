@@ -68,11 +68,26 @@ pipeline {
                             dir(CONFIG_REPO_DIR) {
                                 sh "git config user.email 'jenkins-bot@example.com'"
                                 sh "git config user.name 'Jenkins Bot'"
-                                sh "sed -i 's|tag:.*#backend-tag|tag: ${env.NEW_IMAGE_TAG} #backend-tag|' values.yaml"
-                                sh "git add . ; git commit -m 'CI: Bump backend image to ${newTag}' ; git push origin main"
-                                echo "Successfully pushed configuration update."
+
+                                // Escape dấu # trong shell bằng cách dùng dấu phân cách khác (|) thay vì /
+                                sh """
+                                    sed -i 's|tag:.*#backend-tag|tag: ${newTag} #backend-tag|' values.yaml
+                                """
+
+                                // Kiểm tra xem có thay đổi không trước khi commit
+                                sh """
+                                    if ! git diff --quiet; then
+                                        git add values.yaml
+                                        git commit -m 'CI: Bump backend image to ${newTag}'
+                                        git push origin main
+                                        echo "Successfully pushed configuration update."
+                                    else
+                                        echo "No changes to commit."
+                                    fi
+                                """
                             }
                         }
+
                     }
                 }
             }
