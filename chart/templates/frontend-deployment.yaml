@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "chart.fullname" . }}-frontend
+  name: {{ .Release.Name }}-frontend
 spec:
   replicas: {{ .Values.frontend.replicaCount }}
   selector:
@@ -19,4 +19,4 @@ spec:
         - containerPort: 80
         env:
         - name: REACT_APP_API_URL
-          value: "http://{{ include "chart.fullname" . }}-backend:8080"
+          value: "http://{{ .Release.Name }}-backend:8080"

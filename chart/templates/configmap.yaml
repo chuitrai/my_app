@@ -1,10 +1,10 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "chart.fullname" . }}-config
+  name: {{ .Release.Name }}-config
 data:
   # Các biến môi trường cho backend
-  DB_HOST: {{ include "chart.fullname" . }}-database # Tên service của database
+  DB_HOST: {{ .Release.Name }}-database # Tên service của database
   POSTGRES_DB: {{ .Values.database.dbName }}
   POSTGRES_USER: {{ .Values.database.username }}
 
@@ -24,7 +24,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "chart.fullname" . }}-csv-data
+  name: {{ .Release.Name }}-csv-data
 binaryData:
   # Dán nội dung của file Danhsach.csv đã được mã hóa base64 vào đây
   # Cách làm: chạy `cat Danhsach.csv | base64` trong terminal và dán kết quả
