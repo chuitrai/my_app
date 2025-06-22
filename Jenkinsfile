@@ -1,40 +1,42 @@
-// file: my_app/Jenkinsfile
+// Jenkinsfile - Sử dụng HTTPS và Personal Access Token
 
 pipeline {
-    // Chạy trên bất kỳ agent nào có sẵn
-    agent any 
+    // Chạy trên bất kỳ agent nào có sẵn. Đảm bảo agent có cài 'git' và 'sed'.
+    agent any
 
-    // Các biến môi trường để dễ quản lý
+    // Các biến môi trường để quản lý tập trung
     environment {
-        DOCKER_USERNAME       = 'chuitrai2901' // <-- Thay bằng Docker ID của bạn
+        // --- Cấu hình Docker & Image ---
+        DOCKER_USERNAME       = 'chuitrai2901' // <-- Docker ID của bạn
         BACKEND_IMAGE_NAME    = "${DOCKER_USERNAME}/my-go-backend"
-        CONFIG_REPO_URL_SSH   = 'git@github.com:chuitrai/my_app_config.git' // Dùng SSH để push
-        CONFIG_REPO_DIR       = 'my_app_config'
-        // Sử dụng ID của credential bạn đã tạo
-        DOCKER_CREDENTIALS_ID = 'dock-cre' 
-        // ID của credential chứa SSH key cho repo config
-        GIT_CREDENTIALS_ID    = 'github-pat' // Chúng ta sẽ tạo credential này
+        DOCKER_CREDENTIALS_ID = 'dock-cre'      // ID của credential Docker Hub
+
+        // --- Cấu hình Git & Repo ---
+        // Sử dụng URL HTTPS cho repo cấu hình
+        CONFIG_REPO_URL_HTTPS = 'https://github.com/chuitrai/my_app_config.git' 
+        CONFIG_REPO_DIR       = 'my_app_config_clone' // Đặt tên thư mục clone để tránh trùng lặp
+        GIT_CREDENTIALS_ID    = 'github-pat'          // <-- ID của credential chứa PAT
     }
 
     stages {
-        // Giai đoạn 1: Lấy source code
+        // Giai đoạn 1: Lấy source code ứng dụng
         stage('Checkout Source') {
             steps {
                 echo 'Checking out application source code...'
-                // Tự động checkout nhánh đã trigger pipeline
                 checkout scm 
-            }   
+            }
         }
 
         // Giai đoạn 2: Build Docker Image
         stage('Build Image') {
             steps {
                 script {
-                    // Tạo một tag duy nhất dựa trên số lần build
-                    def newTag = "v1.0.${env.BUILD_NUMBER}"
-                    echo "Building image with tag: ${newTag}"
+                    // Tạo một tag duy nhất và dễ nhận biết cho mỗi lần build
+                    env.NEW_IMAGE_TAG = "v1.0.${env.BUILD_NUMBER}"
+                    echo "Building image with tag: ${env.NEW_IMAGE_TAG}"
+                    
                     // Build image từ Dockerfile trong thư mục ./backend
-                    docker.build("${BACKEND_IMAGE_NAME}:${newTag}", "./backend")
+                    docker.build("${BACKEND_IMAGE_NAME}:${env.NEW_IMAGE_TAG}", "./backend")
                 }
             }
         }
@@ -42,49 +44,47 @@ pipeline {
         // Giai đoạn 3: Đẩy Image lên Docker Hub
         stage('Push Image') {
             steps {
-                script {
-                    def newTag = "v1.0.${env.BUILD_NUMBER}"
-                    // Sử dụng credential đã lưu để đăng nhập và push
-                    docker.withRegistry("https://index.docker.io/v1/", DOCKER_CREDENTIALS_ID) {
-                        docker.image("${BACKEND_IMAGE_NAME}:${newTag}").push()
-                        echo "Successfully pushed ${BACKEND_IMAGE_NAME}:${newTag}"
-                    }
+                // Sử dụng credential đã lưu để đăng nhập và push
+                docker.withRegistry("https://index.docker.io/v1/", DOCKER_CREDENTIALS_ID) {
+                    docker.image("${BACKEND_IMAGE_NAME}:${env.NEW_IMAGE_TAG}").push()
+                    echo "Successfully pushed ${BACKEND_IMAGE_NAME}:${env.NEW_IMAGE_TAG}"
                 }
             }
         }
 
-        // Giai đoạn 4: Cập nhật Repo Cấu hình
+        // Giai đoạn 4: Cập nhật Repo Cấu hình (Đã sửa lại)
         stage('Update Configuration') {
             steps {
                 script {
-                    def newTag = "v1.0.${env.BUILD_NUMBER}"
-                    echo "Updating config repo with new image tag: ${newTag}"
-                    // Sử dụng SSH key để checkout và push vào repo config
-                    withCredentials([sshUserPrivateKey(credentialsId: GIT_CREDENTIALS_ID, keyFileVariable: 'SSH_KEY')]) {
-                        // Cần cài đặt ssh-agent trên Jenkins agent
-                        sh '''
-                            # Bắt đầu ssh-agent và thêm key vào
-                            eval $(ssh-agent -s)
-                            ssh-add $SSH_KEY
-                            
-                            # Tắt kiểm tra host key nghiêm ngặt
-                            mkdir -p ~/.ssh
-                            echo "Host github.com\\n\\tStrictHostKeyChecking no\\n" >> ~/.ssh/config
+                    echo "Updating config repo with new image tag: ${env.NEW_IMAGE_TAG}"
+                    
+                    // Sử dụng credential 'github-pat' (Loại: Secret text)
+                    withCredentials([string(credentialsId: GIT_CREDENTIALS_ID, variable: 'GIT_TOKEN')]) {
+                        
+                        // Xóa thư mục clone cũ nếu tồn tại để đảm bảo sạch sẽ
+                        sh "rm -rf ${CONFIG_REPO_DIR}"
 
-                            # Clone, sửa, commit, và push
-                            git clone ${CONFIG_REPO_URL_SSH} ${CONFIG_REPO_DIR}
-                            cd ${CONFIG_REPO_DIR}
-                            
-                            # Dùng yq (cần cài trên agent) hoặc sed để sửa file
-                            # Ví dụ dùng sed
-                            sed -i "s|tag:.*#backend|tag: ${newTag} #backend|" values.yaml
+                        // Clone repo config bằng URL HTTPS có chèn token để xác thực
+                        sh "git clone https://${GIT_TOKEN}@github.com/chuitrai/my_app_config.git ${CONFIG_REPO_DIR}"
+                        
+                        // Di chuyển vào thư mục repo vừa clone
+                        dir(CONFIG_REPO_DIR) {
+                            // Cấu hình thông tin người commit (Jenkins Bot)
+                            sh "git config user.email 'jenkins-bot@example.com'"
+                            sh "git config user.name 'Jenkins Bot'"
 
-                            git config user.email "jenkins-bot@example.com"
-                            git config user.name "Jenkins Bot"
-                            git add values.yaml
-                            git commit -m "CI: Bump backend image to ${newTag}"
-                            git push origin main
-                        '''
+                            // Dùng sed để tìm và thay thế dòng tag của backend
+                            // Yêu cầu: trong values.yaml, dòng tag của backend phải có comment #backend-tag
+                            // Ví dụ: tag: "v1.0.0" #backend-tag
+                            sh "sed -i 's|^    tag: .*#backend-tag|    tag: ${env.NEW_IMAGE_TAG} #backend-tag|' values.yaml"
+                            
+                            // Commit và push thay đổi lên nhánh main
+                            sh "git add values.yaml"
+                            sh "git commit -m 'CI: Bump backend image to ${env.NEW_IMAGE_TAG}'"
+                            sh "git push origin main"
+
+                            echo "Successfully pushed configuration update."
+                        }
                     }
                 }
             }
