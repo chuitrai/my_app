@@ -91,7 +91,7 @@ func main() {
 	// Create router
 	r := mux.NewRouter()
 	r.HandleFunc("/api/users", getItem).Methods("GET")
-	// r.HandleFunc("/test", test).Methods("GET")
+	r.HandleFunc("/test", test).Methods("GET")
 
 	log.Printf("Server is running on port 8080...")
 	log.Fatal(http.ListenAndServe(":8080", r))
