@@ -54,17 +54,17 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(users)
 }
 
-func test(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*") // Cho phép các domain khác gọi API này
+// func test(w http.ResponseWriter, r *http.Request) {
+// 	w.Header().Set("Content-Type", "application/json")
+// 	w.Header().Set("Access-Control-Allow-Origin", "*") // Cho phép các domain khác gọi API này
 
-	response := map[string]string{"message": "Hello, World!"}
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("Error encoding response: %v", err)
-		http.Error(w, "Server error", http.StatusInternalServerError)
-		return
-	}
-}
+// 	response := map[string]string{"message": "Hello, World!"}
+// 	if err := json.NewEncoder(w).Encode(response); err != nil {
+// 		log.Printf("Error encoding response: %v", err)
+// 		http.Error(w, "Server error", http.StatusInternalServerError)
+// 		return
+// 	}
+// }
 
 func main() {
 	connStr := fmt.Sprintf("user=%s password=%s dbname=%s host=%s sslmode=disable",
@@ -91,7 +91,7 @@ func main() {
 	// Create router
 	r := mux.NewRouter()
 	r.HandleFunc("/api/users", getItem).Methods("GET")
-	r.HandleFunc("/test", test).Methods("GET")
+	// r.HandleFunc("/test", test).Methods("GET")
 
 	log.Printf("Server is running on port 8080...")
 	log.Fatal(http.ListenAndServe(":8080", r))
