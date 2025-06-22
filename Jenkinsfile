@@ -3,34 +3,7 @@
 pipeline {
     // Chạy trên bất kỳ agent nào có sẵn của Jenkins trên K8s.
     // Agent này sẽ là một môi trường Linux.
-    agent {
-        kubernetes {
-            yaml """
-                apiVersion: v1
-                kind: Pod
-                metadata:
-                labels:
-                    some-label: docker
-                spec:
-                containers:
-                    - name: docker
-                    image: docker:20.10.16-dind
-                    command:
-                        - cat
-                    tty: true
-                    securityContext:
-                        privileged: true
-                    volumeMounts:
-                        - name: docker-sock
-                        mountPath: /var/run/docker.sock
-                volumes:
-                    - name: docker-sock
-                    hostPath:
-                        path: /var/run/docker.sock
-                """
-            defaultContainer 'docker'
-        }
-    }
+    agent any
 
     // Các biến môi trường để quản lý tập trung
     environment {
