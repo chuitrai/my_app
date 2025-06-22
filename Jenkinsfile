@@ -101,6 +101,7 @@ pipeline {
                                 } else {
                                     echo "No changes detected in config repo. Skipping commit and push."
                                 }
+                            }
                         }
                     }
                 }
