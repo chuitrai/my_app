@@ -3,14 +3,7 @@
 pipeline {
     // ---- THAY ĐỔI QUAN TRỌNG NHẤT ----
     // Yêu cầu Jenkins chạy pipeline này bên trong một container Docker
-    agent {
-        docker {
-            // Sử dụng một image có sẵn Docker client và các công cụ cơ bản
-            image 'docker:20.10.16' 
-            // Cung cấp các cờ bổ sung để agent có thể giao tiếp với Docker daemon của host
-            args '-v /var/run/docker.sock:/var/run/docker.sock' 
-        }
-    }
+    agent { label 'linux' }
 
     // Các biến môi trường (giữ nguyên)
     environment {
