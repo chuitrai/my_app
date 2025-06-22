@@ -76,7 +76,7 @@ pipeline {
         // Giai đoạn 3: Chỉ chạy khi được trigger bởi một Git Tag
         stage('Publish and Deploy Release') {
             when {
-                tag "*" // Điều kiện: chạy khi có bất kỳ tag nào
+                tag pattern: 'v.*', comparator: 'REGEXP'
             }
             steps {
                 container('docker') {
@@ -100,6 +100,9 @@ pipeline {
                                 sh "git add . ; git commit -m 'CI: Release backend version ${env.IMAGE_TAG}' ; git push origin main"
                                 echo "Successfully pushed configuration update."
                             }
+                        }
+                        if (!env.TAG_NAME) {
+                            echo "⚠️ Not a tag build. Skipping deploy..."
                         }
                     }
                 }
