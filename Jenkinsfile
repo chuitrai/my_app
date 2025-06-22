@@ -35,7 +35,7 @@ pipeline {
         CONFIG_REPO_URL_HTTPS = 'https://github.com/chuitrai/my_app_config.git'
         CONFIG_REPO_DIR       = 'my_app_config_clone'
         DOCKER_CREDENTIALS_ID = 'dock-cre'
-        GIT_CREDENTIALS_ID    = 'github-pat'
+        GIT_CREDENTIALS_ID    = 'git-pat'
     }
 
     stages {
