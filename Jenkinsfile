@@ -70,20 +70,21 @@ pipeline {
 
         // Giai đoạn 3: Chỉ chạy khi được trigger bởi một Git Tag
         stage('Publish and Deploy Release') {
-            // ---- ĐIỀU KIỆN QUAN TRỌNG NHẤT ----
-            when {
-                tag pattern: "v.*"
+    when {
+        tag pattern: "v.*"
             }
             steps {
                 container('docker') {
                     script {
-                        // --- Push Release Image ---
+                        if (!env.TAG_NAME) {
+                            error(" TAG_NAME is null. Make sure this pipeline is triggered from a Git tag.")
+                        }
+
                         echo "Publishing release image: ${BACKEND_IMAGE_NAME}:${env.TAG_NAME}"
                         docker.withRegistry("https://index.docker.io/v1/", DOCKER_CREDENTIALS_ID) {
                             docker.image("${BACKEND_IMAGE_NAME}:${env.TAG_NAME}").push()
                         }
 
-                        // --- Update Config Repo ---
                         echo "Updating config repo to release version: ${env.TAG_NAME}"
                         withCredentials([string(credentialsId: GIT_CREDENTIALS_ID, variable: 'GIT_TOKEN')]) {
                             sh "rm -rf ${CONFIG_REPO_DIR}"
