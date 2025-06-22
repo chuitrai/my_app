@@ -72,7 +72,7 @@ pipeline {
         stage('Publish and Deploy Release') {
             // ---- ĐIỀU KIỆN QUAN TRỌNG NHẤT ----
             when {
-                tag() // Chỉ chạy stage này nếu là build từ một tag
+                tag pattern: "v.*"
             }
             steps {
                 container('docker') {
