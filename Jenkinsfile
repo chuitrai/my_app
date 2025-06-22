@@ -53,7 +53,7 @@ pipeline {
                         sh 'apk add --no-cache git sed'
 
                         // --- Stage: Build & Push ---
-                        def newTag = "v1.0.${env.BUILD_NUMBER}"
+                        def newTag = env.TAG_NAME ?: "dev-${env.BUILD_NUMBER}"
                         echo "Building and pushing image: ${BACKEND_IMAGE_NAME}:${newTag}"
                         docker.withRegistry("https://index.docker.io/v1/", DOCKER_CREDENTIALS_ID) {
                             def builtImage = docker.build("${BACKEND_IMAGE_NAME}:${newTag}", "./backend")
