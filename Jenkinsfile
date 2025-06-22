@@ -1,10 +1,9 @@
-// Jenkinsfile - Hỗ trợ cả CI (cho nhánh) và CD (cho tag)
+// Jenkinsfile - Sửa lỗi scope của biến và hoàn thiện
 
 pipeline {
-    // ---- ĐỊNH NGHĨA AGENT TƯỜNG MINH ----
+    // ---- AGENT ----
     agent {
         kubernetes {
-            // Định nghĩa Pod Template bằng YAML
             yaml """
             apiVersion: v1
             kind: Pod
@@ -30,6 +29,7 @@ pipeline {
         }
     }
 
+    // ---- KHAI BÁO BIẾN Ở CẤP ĐỘ CAO NHẤT ----
     environment {
         DOCKER_USERNAME       = 'chuitrai2901'
         BACKEND_IMAGE_NAME    = "${DOCKER_USERNAME}/my-go-backend"
@@ -37,31 +37,36 @@ pipeline {
         CONFIG_REPO_DIR       = 'my_app_config_clone'
         DOCKER_CREDENTIALS_ID = 'dock-cre'
         GIT_CREDENTIALS_ID    = 'github-pat'
+        // Khai báo biến IMAGE_TAG ở đây nhưng chưa gán giá trị
+        IMAGE_TAG             = '' 
     }
 
     stages {
-        // Giai đoạn 1: Luôn chạy để chuẩn bị môi trường
-        stage('Setup Environment') {
+        // Giai đoạn 1: Luôn chạy để chuẩn bị môi trường và xác định tag
+        stage('Setup and Define Tag') {
             steps {
                 container('docker') {
                     script {
-                        echo "Checking out code..."
+                        echo 'Checking out source code...'
                         checkout scm
                         echo "Installing dependencies..."
                         sh 'apk add --no-cache git sed'
+
+                        // ---- GÁN GIÁ TRỊ CHO BIẾN Ở ĐÂY ----
+                        // Gán giá trị cho biến IMAGE_TAG đã được khai báo ở trên
+                        env.IMAGE_TAG = env.TAG_NAME ?: "dev-${env.BUILD_NUMBER}"
+                        echo "Determined image tag: ${env.IMAGE_TAG}"
                     }
                 }
             }
         }
         
-        // Giai đoạn 2: Luôn chạy để build và xác nhận code
+        // Giai đoạn 2: Luôn chạy để build
         stage('Build Image') {
             steps {
                 container('docker') {
                     script {
-                        // Xác định tag: nếu là build từ Git tag, dùng tên tag. Nếu không, dùng dev-<số-build>.
-                        env.IMAGE_TAG = env.TAG_NAME ?: "dev-${env.BUILD_NUMBER}"
-                        echo "Building image with tag: ${env.IMAGE_TAG}"
+                        echo "Building image: ${BACKEND_IMAGE_NAME}:${env.IMAGE_TAG}"
                         docker.build("${BACKEND_IMAGE_NAME}:${env.IMAGE_TAG}", "./backend")
                     }
                 }
@@ -70,22 +75,20 @@ pipeline {
 
         // Giai đoạn 3: Chỉ chạy khi được trigger bởi một Git Tag
         stage('Publish and Deploy Release') {
-    when {
-        tag pattern: "v.*"
+            when {
+                tag "*" // Điều kiện: chạy khi có bất kỳ tag nào
             }
             steps {
                 container('docker') {
                     script {
-                        if (!env.TAG_NAME) {
-                            error(" TAG_NAME is null. Make sure this pipeline is triggered from a Git tag.")
-                        }
-
-                        echo "Publishing release image: ${BACKEND_IMAGE_NAME}:${env.TAG_NAME}"
+                        // --- Push Release Image ---
+                        echo "Publishing release image: ${BACKEND_IMAGE_NAME}:${env.IMAGE_TAG}"
                         docker.withRegistry("https://index.docker.io/v1/", DOCKER_CREDENTIALS_ID) {
-                            docker.image("${BACKEND_IMAGE_NAME}:${env.TAG_NAME}").push()
+                            docker.image("${BACKEND_IMAGE_NAME}:${env.IMAGE_TAG}").push()
                         }
 
-                        echo "Updating config repo to release version: ${env.TAG_NAME}"
+                        // --- Update Config Repo ---
+                        echo "Updating config repo to release version: ${env.IMAGE_TAG}"
                         withCredentials([string(credentialsId: GIT_CREDENTIALS_ID, variable: 'GIT_TOKEN')]) {
                             sh "rm -rf ${CONFIG_REPO_DIR}"
                             sh "git clone https://${GIT_TOKEN}@github.com/chuitrai/my_app_config.git ${CONFIG_REPO_DIR}"
@@ -93,8 +96,8 @@ pipeline {
                             dir(CONFIG_REPO_DIR) {
                                 sh "git config user.email 'jenkins-bot@example.com'"
                                 sh "git config user.name 'Jenkins Bot'"
-                                sh "sed -i 's|^    tag: .*#backend-tag|    tag: ${env.TAG_NAME} #backend-tag|' values.yaml"
-                                sh "git add . ; git commit -m 'CI: Release backend version ${env.TAG_NAME}' ; git push origin main"
+                                sh "sed -i 's|^    tag: .*#backend-tag|    tag: ${env.IMAGE_TAG} #backend-tag|' values.yaml"
+                                sh "git add . ; git commit -m 'CI: Release backend version ${env.IMAGE_TAG}' ; git push origin main"
                                 echo "Successfully pushed configuration update."
                             }
                         }
