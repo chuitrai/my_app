@@ -25,6 +25,7 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*") // CHo reacr tu domain khac goi API nay
 
+	// STH to test
 	rows, err := db.Query("select id, name, birthday, school from users order by name asc")
 	if err != nil {
 		log.Printf("Er when querying database: %v", err)
