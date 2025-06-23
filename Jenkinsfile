@@ -75,7 +75,7 @@ pipeline {
 
         stage('Publish and Deploy Release') {
             when {
-                tag pattern: "*", comparator: "REGEXP"
+                tag pattern: ".*", comparator: "REGEXP"
             }
             steps {
                 container('docker') {
