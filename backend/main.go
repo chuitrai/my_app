@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/mux"
 	_ "github.com/lib/pq" // PostgreSQL driver
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type User struct {
@@ -57,6 +58,7 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 func test(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*") // Cho phép các domain khác gọi API này
+	
 
 	response := map[string]string{"message": "Hello, World!"}
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -90,8 +92,12 @@ func main() {
 
 	// Create router
 	r := mux.NewRouter()
+	r.Use(prometheusMiddleware) // Use the Prometheus middleware
+
 	r.HandleFunc("/api/users", getItem).Methods("GET")
 	r.HandleFunc("/test", test).Methods("GET")
+	r.Handle("/metrics", promhttp.Handler())
+
 
 	log.Printf("Server is running on port 8080...")
 	log.Fatal(http.ListenAndServe(":8080", r))
