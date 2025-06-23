@@ -11,6 +11,16 @@ import (
 	"github.com/gorilla/mux"
 	_ "github.com/lib/pq" // PostgreSQL driver
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/client_golang/prometheus"
+    "github.com/prometheus/client_golang/prometheus/promauto"
+)
+
+
+var (
+    usersRetrievedCounter = promauto.NewCounter(prometheus.CounterOpts{
+        Name: "myapp_users_retrieved_total",
+        Help: "Total number of users retrieved from the API.",
+    })
 )
 
 type User struct {
@@ -51,6 +61,7 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 		users = append(users, user)
 	}
 	log.Printf("Retrieved %d users from database", len(users))
+	usersRetrievedCounter.Add(float64(len(users)))
 
 	json.NewEncoder(w).Encode(users)
 }

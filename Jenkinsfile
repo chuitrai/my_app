@@ -1,39 +1,34 @@
-// Jenkinsfile - Phiên bản cuối cùng với Kaniko
+// Jenkinsfile - Phiên bản cuối cùng, tự định nghĩa Pod Agent hoàn chỉnh
+
 pipeline {
+    // ---- ĐỊNH NGHĨA AGENT MỘT CÁCH TƯỜNG MINH ----
     agent {
         kubernetes {
-            // Định nghĩa Pod Template với container JNLP và KANIKO
+            // Định nghĩa Pod Template ngay tại đây
             yaml """
             apiVersion: v1
             kind: Pod
             spec:
               containers:
               - name: jnlp
-                image: jenkins/inbound-agent:3107.v665000b_51092-5
+                image: jenkins/inbound-agent:latest
                 args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
                 workingDir: /home/jenkins/agent
-                command:
-                - sleep
-                args:
-                - infinity
-              - name: kaniko
-                image: gcr.io/kaniko-project/executor:v1.9.0-debug
+              - name: docker
+                image: docker:20.10.16
                 command:
                 - sleep
                 args:
                 - infinity
                 volumeMounts:
-                - name: kaniko-secret
-                  mountPath: /kaniko/.docker
+                - name: docker-socket
+                  mountPath: /var/run/docker.sock
               volumes:
-              - name: kaniko-secret
-                secret:
-                  secretName: regcred # Tên secret ta đã tạo bằng kubectl
-                  items:
-                    - key: .dockerconfigjson
-                      path: config.json
+              - name: docker-socket
+                hostPath:
+                  path: /var/run/docker.sock
             """
-            label 'k8s-agent-with-kaniko'
+            label 'k8s-agent-with-docker'
         }
     }
 
@@ -42,49 +37,30 @@ pipeline {
         BACKEND_IMAGE_NAME    = "${DOCKER_USERNAME}/my-go-backend"
         CONFIG_REPO_URL_HTTPS = 'https://github.com/chuitrai/my_app_config.git'
         CONFIG_REPO_DIR       = 'my_app_config_clone'
+        DOCKER_CREDENTIALS_ID = 'dock-cre'
         GIT_CREDENTIALS_ID    = 'github-pat'
     }
 
     stages {
-        stage('Checkout & Setup') {
+        // Chạy tất cả các bước bên trong container 'docker'
+        stage('CI/CD Pipeline') {
             steps {
-                // Chạy trong container jnlp mặc định
-                container('jnlp') {
-                    echo 'Checking out source code...'
-                    checkout scm
-                    echo 'Installing dependencies...'
-                    sh 'apk add --no-cache git sed'
-                }
-            }
-        }
-
-        stage('Build & Push with Kaniko') {
-            steps {
-                // Chuyển sang container kaniko để thực hiện build
-                container('kaniko') {
+                container('docker') {
                     script {
-                        def newTag = "v1.0.${env.BUILD_NUMBER}"
-                        echo "Building and pushing image with Kaniko: ${BACKEND_IMAGE_NAME}:${newTag}"
+                        // --- Stage: Setup ---
+                        echo 'Checking out source code and installing dependencies...'
+                        checkout scm
+                        sh 'apk add --no-cache git sed'
 
-                        // Chạy lệnh Kaniko executor
-                        sh """
-                        /kaniko/executor \
-                          --context="dir:///home/jenkins/agent/backend" \
-                          --dockerfile="dir:///home/jenkins/agent/backend/Dockerfile" \
-                          --destination="${BACKEND_IMAGE_NAME}:${newTag}" \
-                          --cache=true
-                        """
-                    }
-                }
-            }
-        }
-
-        stage('Update Config Repository') {
-            steps {
-                // Quay lại container jnlp để chạy các lệnh git
-                container('jnlp') {
-                    script {
+                        // --- Stage: Build & Push ---
                         def newTag = "v1.0.${env.BUILD_NUMBER}"
+                        echo "Building and pushing image: ${BACKEND_IMAGE_NAME}:${newTag}"
+                        docker.withRegistry("https://index.docker.io/v1/", DOCKER_CREDENTIALS_ID) {
+                            def builtImage = docker.build("${BACKEND_IMAGE_NAME}:${newTag}", "./backend")
+                            builtImage.push()
+                        }
+
+                        // --- Stage: Update Config ---
                         echo "Updating config repo with new image tag: ${newTag}"
                         withCredentials([string(credentialsId: GIT_CREDENTIALS_ID, variable: 'GIT_TOKEN')]) {
                             sh "rm -rf ${CONFIG_REPO_DIR}"
@@ -93,8 +69,12 @@ pipeline {
                                 sh "git config user.email 'jenkins-bot@example.com'"
                                 sh "git config user.name 'Jenkins Bot'"
 
-                                sh "sed -i 's|tag:.*#backend-tag|tag: ${newTag} #backend-tag|' values.yaml"
+                                // Escape dấu # trong shell bằng cách dùng dấu phân cách khác (|) thay vì /
+                                sh """
+                                    sed -i 's|tag:.*#backend-tag|tag: ${newTag} #backend-tag|' values.yaml
+                                """
 
+                                // Kiểm tra xem có thay đổi không trước khi commit
                                 sh """
                                     if ! git diff --quiet; then
                                         git add values.yaml
@@ -107,6 +87,7 @@ pipeline {
                                 """
                             }
                         }
+
                     }
                 }
             }
