@@ -1,126 +1,170 @@
-// Jenkinsfile - Thêm các dòng echo để tăng khả năng quan sát
+// Jenkinsfile - Phiên bản nâng cấp cho Backend & Frontend, sử dụng Kaniko
 
 pipeline {
-    agent {
-        kubernetes {
-            yaml """
-            apiVersion: v1
-            kind: Pod
-            spec:
-              containers:
-              - name: jnlp
-                image: jenkins/inbound-agent:latest
-                args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
-                workingDir: /home/jenkins/agent
-              - name: docker
-                image: docker:20.10.16
-                command: ['sleep']
-                args: ['infinity']
-                volumeMounts:
-                - name: docker-socket
-                  mountPath: /var/run/docker.sock
-              volumes:
-              - name: docker-socket
-                hostPath:
-                  path: /var/run/docker.sock
-            """
-            label 'k8s-agent-with-docker'
-        }
-    }
+    // Không định nghĩa agent ở cấp cao nhất, sẽ định nghĩa cho từng stage
+    agent none
 
     environment {
-        // ... (Giữ nguyên các biến môi trường của bạn) ...
-        DOCKER_USERNAME       = 'chuitrai2901'
-        BACKEND_IMAGE_NAME    = "${DOCKER_USERNAME}/my-go-backend"
-        CONFIG_REPO_URL_HTTPS = 'https://github.com/chuitrai/my_app_config.git'
+        // --- Repo và Credentials ---
+        DOCKER_REGISTRY_URL   = 'https://index.docker.io/v1/'
+        DOCKER_CREDENTIALS_ID = 'dock-cre'      // Jenkins credential ID cho Docker Hub
+        CONFIG_REPO_URL       = 'https://github.com/chuitrai/my_app_config.git'
         CONFIG_REPO_DIR       = 'my_app_config_clone'
-        DOCKER_CREDENTIALS_ID = 'dock-cre'
-        GIT_CREDENTIALS_ID    = 'git-pat'
+        GIT_CREDENTIALS_ID    = 'git-pat'       // Jenkins credential ID cho GitHub PAT
+
+        // --- Tên Image ---
+        DOCKER_USERNAME       = 'chuitrai2901'
+        BACKEND_IMAGE_REPO    = "${DOCKER_USERNAME}/my-go-backend"
+        FRONTEND_IMAGE_REPO   = "${DOCKER_USERNAME}/my-react-frontend"
     }
 
     stages {
-        stage('Setup and Build') {
+        // ======================================================================
+        // STAGE 1: Chuẩn bị và xác định phiên bản
+        // ======================================================================
+        stage('1. Preparation & Versioning') {
+            agent any // Chạy trên một agent bất kỳ để thực hiện các tác vụ nhẹ
             steps {
-                container('docker') {
-                    script {
-                        // **ECHO 0: In ra các biến môi trường để debug**
-                        sh 'env | sort'
-                        // --- Setup ---
-                        echo '1. Checking out source code and installing dependencies...'
-                        checkout scm
-                        sh 'apk add --no-cache git sed'
-
-                        // --- Define and Write Tag to a file ---
-                        // **ECHO 1: In ra các biến môi trường để debug**
-                        echo "=========================================="
-
-                        echo "GIT TAG DETECTED (env.TAG_NAME): ${env.TAG_NAME}"
-                        echo "JENKINS BUILD NUMBER (env.BUILD_NUMBER): ${env.BUILD_NUMBER}"
-                        echo "=========================================="
-                        
-                        def imageTag = env.TAG_NAME ?: "dev-${env.BUILD_NUMBER}"
-                        
-                        // **ECHO 2: In ra tag cuối cùng đã được xác định**
-                        echo "==> Final image tag for this build is: ${imageTag}"
-                        
-                        sh "echo ${imageTag} > image.tag"
-
-                        // --- Build Image ---
-                        echo "2. Building image: ${BACKEND_IMAGE_NAME}:${imageTag}"
-                        docker.build("${BACKEND_IMAGE_NAME}:${imageTag}", "./backend")
+                script {
+                    echo "=========================================="
+                    echo "Triggered by: ${currentBuild.fullDisplayName}"
+                    // Điều kiện: Chỉ chạy khi được trigger bởi một tag
+                    if (!env.TAG_NAME) {
+                        error "BUILD ABORTED: This pipeline is designed to run only on git tags."
                     }
+                    echo "VERSION TO BUILD: ${env.TAG_NAME}"
+                    echo "=========================================="
+
+                    // Lưu tag vào workspace để các stage sau có thể dùng
+                    writeFile file: 'version.txt', text: env.TAG_NAME
                 }
             }
         }
 
-        stage('Publish and Deploy Release') {
-            when {
-                tag pattern: ".*", comparator: "REGEXP"
-            }
-            steps {
-                container('docker') {
-                    script {
-                        // **ECHO 3: Đọc lại tag từ file để xác nhận**
-                        echo "=========================================="
-                        def releaseTag = readFile('image.tag').trim()
-                        echo "=========================================="
-                        echo "ENTERING DEPLOYMENT STAGE"
-                        echo "Tag read from file for deployment: ${releaseTag}"
-                        echo "=========================================="
-                        
-                        // --- Push Release Image ---
-                        echo "3. Publishing release image: ${BACKEND_IMAGE_NAME}:${releaseTag}"
-                        docker.withRegistry("https://index.docker.io/v1/", DOCKER_CREDENTIALS_ID) {
-                            docker.image("${BACKEND_IMAGE_NAME}:${releaseTag}").push()
+        // ======================================================================
+        // STAGE 2: Build Images Song Song
+        // ======================================================================
+        stage('2. Build Application Images') {
+            // Chạy hai stage con này song song
+            parallel {
+                // --- Build Backend ---
+                stage('Build Backend') {
+                    // Sử dụng agent Kaniko, không cần Docker-in-Docker
+                    agent {
+                        kubernetes {
+                            cloud 'kubernetes'
+                            label 'kaniko-agent' // Label cho pod template, cần định nghĩa trong Jenkins config
+                            yamlFile 'kaniko-pod-template.yaml' // Sử dụng file template cho sạch sẽ
                         }
+                    }
+                    steps {
+                        container(name: 'kaniko') {
+                            script {
+                                def imageTag = readFile('version.txt').trim()
+                                def finalImageName = "${env.BACKEND_IMAGE_REPO}:${imageTag}"
+                                echo "Building and pushing Backend image: ${finalImageName}"
 
-                        // --- Update Config Repo ---
-                        echo "4. Updating config repo to release version: ${releaseTag}"
-                        withCredentials([string(credentialsId: GIT_CREDENTIALS_ID, variable: 'GIT_TOKEN')]) {
-                            sh "rm -rf ${CONFIG_REPO_DIR}"
-                            sh "git clone https://${GIT_TOKEN}@github.com/chuitrai/my_app_config.git ${CONFIG_REPO_DIR}"
-                            
-                            dir(CONFIG_REPO_DIR) {
-                                sh "git config user.email 'jenkins-bot@example.com'"
-                                sh "git config user.name 'Jenkins Bot'"
-                                sh "sed -i 's|^    tag: .*#backend-tag|    tag: ${releaseTag} #backend-tag|' values.yaml"
-                                
-                                def changes = sh(script: "git status --porcelain", returnStdout: true).trim()
-                                if (changes) {
-                                    sh """
-                                        git add .
-                                        git commit -m 'CI: Release backend version ${env.TAG_NAME}'
-                                        git push origin main
-                                    """
-                                    echo "Successfully pushed configuration update."
-                                } else {
-                                    echo "No changes detected in config repo. Skipping commit and push."
-                                }
+                                // Checkout SCM bên trong workspace của container
+                                checkout scm
+
+                                // Lệnh thực thi Kaniko
+                                sh """
+                                /kaniko/executor --context=dir://\$(pwd)/backend \
+                                                 --dockerfile=\`pwd\`/backend/Dockerfile \
+                                                 --destination=${finalImageName} \
+                                                 --build-arg version=${imageTag}
+                                """
+                            }
+                        }
+                    }
+                }
+
+                // --- Build Frontend ---
+                stage('Build Frontend') {
+                    agent {
+                        kubernetes {
+                            cloud 'kubernetes'
+                            label 'kaniko-agent'
+                            yamlFile 'kaniko-pod-template.yaml'
+                        }
+                    }
+                    steps {
+                        container(name: 'kaniko') {
+                            script {
+                                def imageTag = readFile('version.txt').trim()
+                                def finalImageName = "${env.FRONTEND_IMAGE_REPO}:${imageTag}"
+                                echo "Building and pushing Frontend image: ${finalImageName}"
+
+                                // Checkout SCM
+                                checkout scm
+
+                                // Lệnh thực thi Kaniko
+                                sh """
+                                /kaniko/executor --context=dir://\$(pwd)/frontend \
+                                                 --dockerfile=\`pwd\`/frontend/Dockerfile \
+                                                 --destination=${finalImageName} \
+                                                 --build-arg version=${imageTag}
+                                """
                             }
                         }
                     }
                 }
             }
+        }
+
+        // ======================================================================
+        // STAGE 3: Cập nhật repo cấu hình (GitOps)
+        // ======================================================================
+        stage('3. Update Deployment Configuration') {
+            agent any // Agent cần có git và sed
+            steps {
+                script {
+                    def releaseTag = readFile('version.txt').trim()
+                    echo "Updating config repo to version: ${releaseTag}"
+
+                    // Cần cài đặt git trên agent này nếu chưa có
+                    sh 'git --version'
+                    sh 'sed --version'
+
+                    withCredentials([string(credentialsId: GIT_CREDENTIALS_ID, variable: 'GIT_TOKEN')]) {
+                        sh "rm -rf ${CONFIG_REPO_DIR}"
+                        // Clone repo config
+                        sh "git clone https://${GIT_TOKEN}@github.com/chuitrai/my_app_config.git ${CONFIG_REPO_DIR}"
+
+                        dir(CONFIG_REPO_DIR) {
+                            sh "git config user.email 'jenkins-ci-bot@noreply.com'"
+                            sh "git config user.name 'Jenkins CI Bot'"
+
+                            // Cập nhật tag cho backend
+                            // Sử dụng #comment làm anchor để sed không bị nhầm lẫn
+                            sh "sed -i 's|^    tag: .*#backend-tag|    tag: \"${releaseTag}\" #backend-tag|' my-go-app/values.yaml"
+
+                            // Cập nhật tag cho frontend
+                            sh "sed -i 's|^    tag: .*#frontend-tag|    tag: \"${releaseTag}\" #frontend-tag|' my-go-app/values.yaml"
+
+                            // Cập nhật appVersion trong Chart.yaml
+                            sh "sed -i 's|^appVersion: .*|appVersion: \"${releaseTag}\"|' my-go-app/Chart.yaml"
+                            
+                            def changes = sh(script: "git status --porcelain", returnStdout: true).trim()
+                            if (changes) {
+                                echo "Config changes detected. Committing and pushing..."
+                                sh "git add ."
+                                sh "git commit -m 'CI: Release backend and frontend to version ${releaseTag}'"
+                                sh "git push origin main"
+                                echo "Successfully pushed configuration update."
+                            } else {
+                                echo "No changes detected in config repo. Skipping commit and push."
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            // Dọn dẹp workspace
+            cleanWs()
         }
     }
 }
