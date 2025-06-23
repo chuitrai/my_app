@@ -29,6 +29,9 @@ spec:
         path: /var/run/docker.sock
         type: Socket
 """
+            label 'k8s-agent-with-docker'
+        }
+    }
 
     environment {
         DOCKER_USERNAME       = 'chuitrai2901'
