@@ -7,36 +7,28 @@ pipeline {
 apiVersion: v1
 kind: Pod
 spec:
-    containers:
+  containers:
     - name: jnlp
-        image: jenkins/inbound-agent:latest
-        args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
-        workingDir: /home/jenkins/agent
+      image: jenkins/inbound-agent:latest
+      args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
+      workingDir: /home/jenkins/agent
+
     - name: docker
-        image: docker:20.10.16
-        command:
+      image: docker:20.10.16
+      command:
         - sleep
-        args:
+      args:
         - infinity
-        volumeMounts:
+      volumeMounts:
         - name: docker-socket
-        mountPath: /var/run/docker.sock
-    containers:
-    - name: docker
-        image: docker:20.10.16
-        volumeMounts:
-        - name: docker-socket
-        mountPath: /var/run/docker.sock
-        
+          mountPath: /var/run/docker.sock
+
   volumes:
-  - name: docker-socket
-    hostPath:
-      path: /var/run/docker.sock
-      type: Socket
-            """
-            label 'k8s-agent-with-docker'
-        }
-    }
+    - name: docker-socket
+      hostPath:
+        path: /var/run/docker.sock
+        type: Socket
+"""
 
     environment {
         DOCKER_USERNAME       = 'chuitrai2901'
