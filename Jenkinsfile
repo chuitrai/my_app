@@ -43,6 +43,8 @@ pipeline {
             steps {
                 container('docker') {
                     script {
+                        // **ECHO 0: In ra các biến môi trường để debug**
+                        sh 'env | sort'
                         // --- Setup ---
                         echo '1. Checking out source code and installing dependencies...'
                         checkout scm
