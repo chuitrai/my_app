@@ -1,6 +1,9 @@
 # kaniko-pod-template.yaml
 apiVersion: v1
 kind: Pod
+metadata:
+  name: kaniko-build
+  namespace: default
 spec:
   containers:
   - name: kaniko

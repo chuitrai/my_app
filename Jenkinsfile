@@ -1,4 +1,4 @@
-// Jenkinsfile - Phiên bản nâng cấp cho Backend & Frontend, sử dụng Kaniko
+// Jenkinsfile - Phiên bản cuối cùng, tối ưu và sửa lỗi
 
 pipeline {
     // Không định nghĩa agent ở cấp cao nhất, sẽ định nghĩa cho từng stage
@@ -7,10 +7,10 @@ pipeline {
     environment {
         // --- Repo và Credentials ---
         DOCKER_REGISTRY_URL   = 'https://index.docker.io/v1/'
-        DOCKER_CREDENTIALS_ID = 'dock-cre'      // Jenkins credential ID cho Docker Hub
+        DOCKER_CREDENTIALS_ID = 'dock-cre'
         CONFIG_REPO_URL       = 'https://github.com/chuitrai/my_app_config.git'
         CONFIG_REPO_DIR       = 'my_app_config_clone'
-        GIT_CREDENTIALS_ID    = 'git-pat'       // Jenkins credential ID cho GitHub PAT
+        GIT_CREDENTIALS_ID    = 'git-pat'
 
         // --- Tên Image ---
         DOCKER_USERNAME       = 'chuitrai2901'
@@ -20,23 +20,31 @@ pipeline {
 
     stages {
         // ======================================================================
-        // STAGE 1: Chuẩn bị và xác định phiên bản
+        // STAGE 1: Checkout, xác định phiên bản và lưu trữ
         // ======================================================================
-        stage('1. Preparation & Versioning') {
-            agent any // Chạy trên một agent bất kỳ để thực hiện các tác vụ nhẹ
+        stage('1. Checkout & Versioning') {
+            agent any // Chạy trên một agent bất kỳ
             steps {
                 script {
+                    // --- Checkout code một lần duy nhất ---
+                    echo "Checking out source code..."
+                    checkout scm
+
+                    // --- Xác định phiên bản ---
                     echo "=========================================="
                     echo "Triggered by: ${currentBuild.fullDisplayName}"
-                    // Điều kiện: Chỉ chạy khi được trigger bởi một tag
                     if (!env.TAG_NAME) {
                         error "BUILD ABORTED: This pipeline is designed to run only on git tags."
                     }
-                    echo "VERSION TO BUILD: ${env.TAG_NAME}"
+                    def imageTag = env.TAG_NAME
+                    echo "VERSION TO BUILD: ${imageTag}"
                     echo "=========================================="
 
-                    // Lưu tag vào workspace để các stage sau có thể dùng
-                    writeFile file: 'version.txt', text: env.TAG_NAME
+                    // --- Lưu trữ (stash) workspace và version cho các stage sau ---
+                    // 'includes' giúp stash nhẹ hơn, chỉ chứa những gì cần thiết.
+                    stash name: 'source', includes: 'backend/**, frontend/**, kaniko-pod-template.yaml'
+                    writeFile file: 'version.txt', text: imageTag
+                    stash name: 'version', includes: 'version.txt'
                 }
             }
         }
@@ -45,35 +53,36 @@ pipeline {
         // STAGE 2: Build Images Song Song
         // ======================================================================
         stage('2. Build Application Images') {
-            // Chạy hai stage con này song song
             parallel {
                 // --- Build Backend ---
                 stage('Build Backend') {
-                    // Sử dụng agent Kaniko, không cần Docker-in-Docker
                     agent {
                         kubernetes {
                             cloud 'kubernetes'
-                            label 'kaniko-agent' // Label cho pod template, cần định nghĩa trong Jenkins config
-                            yamlFile 'kaniko-pod-template.yaml' // Sử dụng file template cho sạch sẽ
+                            label 'kaniko-agent'
+                            yamlFile 'kaniko-pod-template.yaml'
                         }
                     }
                     steps {
                         container(name: 'kaniko') {
                             script {
+                                // Lấy lại source code và file version
+                                unstash 'source'
+                                unstash 'version'
+
                                 def imageTag = readFile('version.txt').trim()
                                 def finalImageName = "${env.BACKEND_IMAGE_REPO}:${imageTag}"
                                 echo "Building and pushing Backend image: ${finalImageName}"
 
-                                // Checkout SCM bên trong workspace của container
-                                checkout scm
-
-                                // Lệnh thực thi Kaniko
-                                sh """
-                                /kaniko/executor --context=dir://\$(pwd)//backend \\
-                                                 --dockerfile=\\`pwd\\`//backend//Dockerfile \\
-                                                 --destination=${finalImageName} \\
-                                                 --build-arg version=${imageTag}
-                                """
+                                // Lệnh Kaniko đã được sửa cú pháp
+                                sh (
+                                    script: '/kaniko/executor ' +
+                                            '--context=dir://$(pwd)/backend ' +
+                                            '--dockerfile=$(pwd)/backend/Dockerfile ' +
+                                            '--destination=' + finalImageName + ' ' +
+                                            '--destination=' + "${env.BACKEND_IMAGE_REPO}:latest" + ' ' + // Push thêm tag latest
+                                            '--build-arg version=' + imageTag
+                                )
                             }
                         }
                     }
@@ -91,20 +100,23 @@ pipeline {
                     steps {
                         container(name: 'kaniko') {
                             script {
+                                // Lấy lại source code và file version
+                                unstash 'source'
+                                unstash 'version'
+
                                 def imageTag = readFile('version.txt').trim()
                                 def finalImageName = "${env.FRONTEND_IMAGE_REPO}:${imageTag}"
                                 echo "Building and pushing Frontend image: ${finalImageName}"
 
-                                // Checkout SCM
-                                checkout scm
-
-                                // Lệnh thực thi Kaniko
-                                sh """
-                                /kaniko/executor --context=dir://\$(pwd)//frontend \\
-                                                 --dockerfile=\\`pwd\\`//frontend//Dockerfile \\
-                                                 --destination=${finalImageName} \\
-                                                 --build-arg version=${imageTag}
-                                """
+                                // Lệnh Kaniko đã được sửa cú pháp
+                                sh (
+                                    script: '/kaniko/executor ' +
+                                            '--context=dir://$(pwd)/frontend ' +
+                                            '--dockerfile=$(pwd)/frontend/Dockerfile ' +
+                                            '--destination=' + finalImageName + ' ' +
+                                            '--destination=' + "${env.FRONTEND_IMAGE_REPO}:latest" + ' ' + // Push thêm tag latest
+                                            '--build-arg version=' + imageTag
+                                )
                             }
                         }
                     }
@@ -119,31 +131,26 @@ pipeline {
             agent any // Agent cần có git và sed
             steps {
                 script {
+                    // Lấy lại file version
+                    unstash 'version'
                     def releaseTag = readFile('version.txt').trim()
                     echo "Updating config repo to version: ${releaseTag}"
 
                     // Cần cài đặt git trên agent này nếu chưa có
-                    sh 'git --version'
-                    sh 'sed --version'
+                    sh 'apk add --no-cache git'
 
                     withCredentials([string(credentialsId: GIT_CREDENTIALS_ID, variable: 'GIT_TOKEN')]) {
                         sh "rm -rf ${CONFIG_REPO_DIR}"
-                        // Clone repo config
-                        sh "git clone https://${GIT_TOKEN}@github.com/chuitrai/my_app_config.git ${CONFIG_REPO_DIR}"
+                        sh "git clone https://x-access-token:${GIT_TOKEN}@github.com/chuitrai/my_app_config.git ${CONFIG_REPO_DIR}"
 
                         dir(CONFIG_REPO_DIR) {
                             sh "git config user.email 'jenkins-ci-bot@noreply.com'"
                             sh "git config user.name 'Jenkins CI Bot'"
 
-                            // Cập nhật tag cho backend
-                            // Sử dụng #comment làm anchor để sed không bị nhầm lẫn
-                            sh "sed -i 's|^    tag: .*#backend-tag|    tag: \"${releaseTag}\" #backend-tag|' my-go-app/values.yaml"
-
-                            // Cập nhật tag cho frontend
-                            sh "sed -i 's|^    tag: .*#frontend-tag|    tag: \"${releaseTag}\" #frontend-tag|' my-go-app/values.yaml"
-
-                            // Cập nhật appVersion trong Chart.yaml
-                            sh "sed -i 's|^appVersion: .*|appVersion: \"${releaseTag}\"|' my-go-app/Chart.yaml"
+                            // Lệnh sed đã được làm cho an toàn hơn
+                            sh "sed -i 's|^    tag:.*#backend-tag|    tag: \"${releaseTag}\" #backend-tag|' my-go-app/values.yaml"
+                            sh "sed -i 's|^    tag:.*#frontend-tag|    tag: \"${releaseTag}\" #frontend-tag|' my-go-app/values.yaml"
+                            sh "sed -i 's|^appVersion:.*|appVersion: \"${releaseTag}\"|' my-go-app/Chart.yaml"
                             
                             def changes = sh(script: "git status --porcelain", returnStdout: true).trim()
                             if (changes) {
@@ -161,10 +168,16 @@ pipeline {
             }
         }
     }
+    
+    // Khối post đã được sửa lỗi
     post {
         always {
-            // Dọn dẹp workspace
-            cleanWs()
+            // Cần một agent để thực hiện việc dọn dẹp
+            agent any
+            steps {
+                echo "Cleaning up workspace."
+                cleanWs()
+            }
         }
     }
 }
