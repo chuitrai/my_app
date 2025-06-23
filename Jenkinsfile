@@ -51,6 +51,7 @@ pipeline {
                         // --- Define and Write Tag to a file ---
                         // **ECHO 1: In ra các biến môi trường để debug**
                         echo "=========================================="
+
                         echo "GIT TAG DETECTED (env.TAG_NAME): ${env.TAG_NAME}"
                         echo "JENKINS BUILD NUMBER (env.BUILD_NUMBER): ${env.BUILD_NUMBER}"
                         echo "=========================================="
@@ -72,7 +73,7 @@ pipeline {
 
         stage('Publish and Deploy Release') {
             when {
-                tag pattern: "v.*", comparator: "REGEXP"
+                tag pattern: "*", comparator: "REGEXP"
             }
             steps {
                 container('docker') {
