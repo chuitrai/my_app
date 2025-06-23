@@ -1,37 +1,7 @@
 // Jenkinsfile - Phiên bản cuối cùng, định nghĩa Pod Agent dùng được Docker
 
 pipeline {
-    agent {
-        kubernetes {
-            yaml """
-apiVersion: v1
-kind: Pod
-spec:
-  containers:
-    - name: jnlp
-      image: jenkins/inbound-agent:latest
-      args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
-      workingDir: /home/jenkins/agent
-
-    - name: docker
-      image: docker:20.10.16
-      command:
-        - sleep
-      args:
-        - infinity
-      volumeMounts:
-        - name: docker-socket
-          mountPath: /var/run/docker.sock
-
-  volumes:
-    - name: docker-socket
-      hostPath:
-        path: /var/run/docker.sock
-        type: Socket
-"""
-            label 'k8s-agent-with-docker'
-        }
-    }
+    agent any
 
     environment {
         DOCKER_USERNAME       = 'chuitrai2901'
