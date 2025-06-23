@@ -1,182 +1,95 @@
-// Jenkinsfile - Phiên bản cuối cùng, tối ưu và sửa lỗi
+// Jenkinsfile - Phiên bản cuối cùng, tự định nghĩa Pod Agent hoàn chỉnh
 
 pipeline {
-    // Không định nghĩa agent ở cấp cao nhất, sẽ định nghĩa cho từng stage
-    agent none
+    // ---- ĐỊNH NGHĨA AGENT MỘT CÁCH TƯỜNG MINH ----
+    agent {
+        kubernetes {
+            // Định nghĩa Pod Template ngay tại đây
+            yaml """
+            apiVersion: v1
+            kind: Pod
+            spec:
+              containers:
+              - name: jnlp
+                image: jenkins/inbound-agent:latest
+                args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
+                workingDir: /home/jenkins/agent
+              - name: docker
+                image: docker:20.10.16
+                command:
+                - sleep
+                args:
+                - infinity
+                volumeMounts:
+                - name: docker-socket
+                  mountPath: /var/run/docker.sock
+              volumes:
+              - name: docker-socket
+                hostPath:
+                  path: /var/run/docker.sock
+            """
+            label 'k8s-agent-with-docker'
+        }
+    }
 
     environment {
-        // --- Repo và Credentials ---
-        DOCKER_REGISTRY_URL   = 'https://index.docker.io/v1/'
-        DOCKER_CREDENTIALS_ID = 'dock-cre'
-        CONFIG_REPO_URL       = 'https://github.com/chuitrai/my_app_config.git'
-        CONFIG_REPO_DIR       = 'my_app_config_clone'
-        GIT_CREDENTIALS_ID    = 'git-pat'
-
-        // --- Tên Image ---
         DOCKER_USERNAME       = 'chuitrai2901'
-        BACKEND_IMAGE_REPO    = "${DOCKER_USERNAME}/my-go-backend"
-        FRONTEND_IMAGE_REPO   = "${DOCKER_USERNAME}/my-react-frontend"
+        BACKEND_IMAGE_NAME    = "${DOCKER_USERNAME}/my-go-backend"
+        CONFIG_REPO_URL_HTTPS = 'https://github.com/chuitrai/my_app_config.git'
+        CONFIG_REPO_DIR       = 'my_app_config_clone'
+        DOCKER_CREDENTIALS_ID = 'dock-cre'
+        GIT_CREDENTIALS_ID    = 'github-pat'
     }
 
     stages {
-        // ======================================================================
-        // STAGE 1: Checkout, xác định phiên bản và lưu trữ
-        // ======================================================================
-        stage('1. Checkout & Versioning') {
-            agent any // Chạy trên một agent bất kỳ
+        // Chạy tất cả các bước bên trong container 'docker'
+        stage('CI/CD Pipeline') {
             steps {
-                script {
-                    // --- Checkout code một lần duy nhất ---
-                    echo "Checking out source code..."
-                    checkout scm
+                container('docker') {
+                    script {
+                        // --- Stage: Setup ---
+                        echo 'Checking out source code and installing dependencies...'
+                        checkout scm
+                        sh 'apk add --no-cache git sed'
 
-                    // --- Xác định phiên bản ---
-                    echo "=========================================="
-                    echo "Triggered by: ${currentBuild.fullDisplayName}"
-                    if (!env.TAG_NAME) {
-                        error "BUILD ABORTED: This pipeline is designed to run only on git tags."
-                    }
-                    def imageTag = env.TAG_NAME
-                    echo "VERSION TO BUILD: ${imageTag}"
-                    echo "=========================================="
-
-                    // --- Lưu trữ (stash) workspace và version cho các stage sau ---
-                    // 'includes' giúp stash nhẹ hơn, chỉ chứa những gì cần thiết.
-                    stash name: 'source', includes: 'backend/**, frontend/**, kaniko-pod-template.yaml'
-                    writeFile file: 'version.txt', text: imageTag
-                    stash name: 'version', includes: 'version.txt'
-                }
-            }
-        }
-
-        // ======================================================================
-        // STAGE 2: Build Images Song Song
-        // ======================================================================
-        stage('2. Build Application Images') {
-            parallel {
-                // --- Build Backend ---
-                stage('Build Backend') {
-                    agent {
-                        kubernetes {
-                            cloud 'kubernetes'
-                            label 'kaniko-agent'
-                            yamlFile 'kaniko-pod-template.yaml'
+                        // --- Stage: Build & Push ---
+                        def newTag = "v1.0.${env.BUILD_NUMBER}"
+                        echo "Building and pushing image: ${BACKEND_IMAGE_NAME}:${newTag}"
+                        docker.withRegistry("https://index.docker.io/v1/", DOCKER_CREDENTIALS_ID) {
+                            def builtImage = docker.build("${BACKEND_IMAGE_NAME}:${newTag}", "./backend")
+                            builtImage.push()
                         }
-                    }
-                    steps {
-                        container(name: 'kaniko') {
-                            script {
-                                // Lấy lại source code và file version
-                                unstash 'source'
-                                unstash 'version'
 
-                                def imageTag = readFile('version.txt').trim()
-                                def finalImageName = "${env.BACKEND_IMAGE_REPO}:${imageTag}"
-                                echo "Building and pushing Backend image: ${finalImageName}"
+                        // --- Stage: Update Config ---
+                        echo "Updating config repo with new image tag: ${newTag}"
+                        withCredentials([string(credentialsId: GIT_CREDENTIALS_ID, variable: 'GIT_TOKEN')]) {
+                            sh "rm -rf ${CONFIG_REPO_DIR}"
+                            sh "git clone https://${GIT_TOKEN}@github.com/chuitrai/my_app_config.git ${CONFIG_REPO_DIR}"
+                            dir(CONFIG_REPO_DIR) {
+                                sh "git config user.email 'jenkins-bot@example.com'"
+                                sh "git config user.name 'Jenkins Bot'"
 
-                                // Lệnh Kaniko đã được sửa cú pháp
-                                sh (
-                                    script: '/kaniko/executor ' +
-                                            '--context=dir://$(pwd)/backend ' +
-                                            '--dockerfile=$(pwd)/backend/Dockerfile ' +
-                                            '--destination=' + finalImageName + ' ' +
-                                            '--destination=' + "${env.BACKEND_IMAGE_REPO}:latest" + ' ' + // Push thêm tag latest
-                                            '--build-arg version=' + imageTag
-                                )
+                                // Escape dấu # trong shell bằng cách dùng dấu phân cách khác (|) thay vì /
+                                sh """
+                                    sed -i 's|tag:.*#backend-tag|tag: ${newTag} #backend-tag|' values.yaml
+                                """
+
+                                // Kiểm tra xem có thay đổi không trước khi commit
+                                sh """
+                                    if ! git diff --quiet; then
+                                        git add values.yaml
+                                        git commit -m 'CI: Bump backend image to ${newTag}'
+                                        git push origin main
+                                        echo "Successfully pushed configuration update."
+                                    else
+                                        echo "No changes to commit."
+                                    fi
+                                """
                             }
                         }
+
                     }
                 }
-
-                // --- Build Frontend ---
-                stage('Build Frontend') {
-                    agent {
-                        kubernetes {
-                            cloud 'kubernetes'
-                            label 'kaniko-agent'
-                            yamlFile 'kaniko-pod-template.yaml'
-                        }
-                    }
-                    steps {
-                        container(name: 'kaniko') {
-                            script {
-                                // Lấy lại source code và file version
-                                unstash 'source'
-                                unstash 'version'
-
-                                def imageTag = readFile('version.txt').trim()
-                                def finalImageName = "${env.FRONTEND_IMAGE_REPO}:${imageTag}"
-                                echo "Building and pushing Frontend image: ${finalImageName}"
-
-                                // Lệnh Kaniko đã được sửa cú pháp
-                                sh (
-                                    script: '/kaniko/executor ' +
-                                            '--context=dir://$(pwd)/frontend ' +
-                                            '--dockerfile=$(pwd)/frontend/Dockerfile ' +
-                                            '--destination=' + finalImageName + ' ' +
-                                            '--destination=' + "${env.FRONTEND_IMAGE_REPO}:latest" + ' ' + // Push thêm tag latest
-                                            '--build-arg version=' + imageTag
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // ======================================================================
-        // STAGE 3: Cập nhật repo cấu hình (GitOps)
-        // ======================================================================
-        stage('3. Update Deployment Configuration') {
-            agent any // Agent cần có git và sed
-            steps {
-                script {
-                    // Lấy lại file version
-                    unstash 'version'
-                    def releaseTag = readFile('version.txt').trim()
-                    echo "Updating config repo to version: ${releaseTag}"
-
-                    // Cần cài đặt git trên agent này nếu chưa có
-                    sh 'apk add --no-cache git'
-
-                    withCredentials([string(credentialsId: GIT_CREDENTIALS_ID, variable: 'GIT_TOKEN')]) {
-                        sh "rm -rf ${CONFIG_REPO_DIR}"
-                        sh "git clone https://x-access-token:${GIT_TOKEN}@github.com/chuitrai/my_app_config.git ${CONFIG_REPO_DIR}"
-
-                        dir(CONFIG_REPO_DIR) {
-                            sh "git config user.email 'jenkins-ci-bot@noreply.com'"
-                            sh "git config user.name 'Jenkins CI Bot'"
-
-                            // Lệnh sed đã được làm cho an toàn hơn
-                            sh "sed -i 's|^    tag:.*#backend-tag|    tag: \"${releaseTag}\" #backend-tag|' my-go-app/values.yaml"
-                            sh "sed -i 's|^    tag:.*#frontend-tag|    tag: \"${releaseTag}\" #frontend-tag|' my-go-app/values.yaml"
-                            sh "sed -i 's|^appVersion:.*|appVersion: \"${releaseTag}\"|' my-go-app/Chart.yaml"
-                            
-                            def changes = sh(script: "git status --porcelain", returnStdout: true).trim()
-                            if (changes) {
-                                echo "Config changes detected. Committing and pushing..."
-                                sh "git add ."
-                                sh "git commit -m 'CI: Release backend and frontend to version ${releaseTag}'"
-                                sh "git push origin main"
-                                echo "Successfully pushed configuration update."
-                            } else {
-                                echo "No changes detected in config repo. Skipping commit and push."
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    // Khối post đã được sửa lỗi
-    post {
-        always {
-            // Cần một agent để thực hiện việc dọn dẹp
-            agent any
-            steps {
-                echo "Cleaning up workspace."
-                cleanWs()
             }
         }
     }
