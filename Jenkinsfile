@@ -78,6 +78,7 @@ pipeline {
                 container('docker') {
                     script {
                         // **ECHO 3: Đọc lại tag từ file để xác nhận**
+                        echo "=========================================="
                         def releaseTag = readFile('image.tag').trim()
                         echo "=========================================="
                         echo "ENTERING DEPLOYMENT STAGE"
