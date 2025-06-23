@@ -72,7 +72,7 @@ pipeline {
 
         stage('Publish and Deploy Release') {
             when {
-                tag pattern: "*", comparator: "REGEXP"
+                tag pattern: "v.*", comparator: "REGEXP"
             }
             steps {
                 container('docker') {
