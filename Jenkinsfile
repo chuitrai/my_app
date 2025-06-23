@@ -70,7 +70,7 @@ pipeline {
                                 // Lệnh thực thi Kaniko
                                 sh """
                                 /kaniko/executor --context=dir://\$(pwd)//backend \\
-                                                 --dockerfile=\\`pwd\\`//backend/Dockerfile //
+                                                 --dockerfile=\\`pwd\\`//backend/Dockerfile \ //
                                                  --destination=${finalImageName} \\
                                                  --build-arg version=${imageTag}
                                 """
@@ -100,9 +100,9 @@ pipeline {
 
                                 // Lệnh thực thi Kaniko
                                 sh """
-                                /kaniko/executor --context=dir://\$(pwd)/frontend \
-                                                 --dockerfile=\\`pwd\`/frontend/Dockerfile \ //
-                                                 --destination=${finalImageName} \
+                                /kaniko/executor --context=dir://\$(pwd)//frontend \\
+                                                 --dockerfile=\\`pwd\`//frontend/Dockerfile \ //
+                                                 --destination=${finalImageName} \\
                                                  --build-arg version=${imageTag}
                                 """
                             }
