@@ -100,8 +100,18 @@ pipeline {
                                 sh "git config user.email 'jenkins-bot@example.com'"
                                 sh "git config user.name 'Jenkins Bot'"
                                 sh "sed -i 's|^    tag: .*#backend-tag|    tag: ${releaseTag} #backend-tag|' values.yaml"
-                                sh "git add . ; git commit -m 'CI: Release backend version ${releaseTag}' ; git push origin main"
-                                echo "Successfully pushed configuration update."
+                                
+                                def changes = sh(script: "git status --porcelain", returnStdout: true).trim()
+                                if (changes) {
+                                    sh """
+                                        git add .
+                                        git commit -m 'CI: Release backend version ${env.TAG_NAME}'
+                                        git push origin main
+                                    """
+                                    echo "Successfully pushed configuration update."
+                                } else {
+                                    echo "No changes detected in config repo. Skipping commit and push."
+                                }
                             }
                         }
                     }
